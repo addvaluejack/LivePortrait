@@ -150,6 +150,7 @@ class Cropper(object):
 
         global_bbox = average_bbox_lst(trajectory.bbox_lst)
 
+        M_c2o_lst = []
         for idx, (frame_rgb, lmk) in enumerate(zip(trajectory.frame_rgb_lst, trajectory.lmk_lst)):
             ret_dct = crop_image_by_bbox(
                 frame_rgb,
@@ -161,10 +162,12 @@ class Cropper(object):
             )
             trajectory.frame_rgb_crop_lst.append(ret_dct["img_crop"])
             trajectory.lmk_crop_lst.append(ret_dct["lmk_crop"])
+            M_c2o_lst.append(ret_dct["M_c2o"])
 
         return {
             "frame_crop_lst": trajectory.frame_rgb_crop_lst,
             "lmk_crop_lst": trajectory.lmk_crop_lst,
+            "M_c2o_lst": M_c2o_lst,
         }
 
     def calc_lmks_from_cropped_video(self, driving_rgb_crop_lst, **kwargs):

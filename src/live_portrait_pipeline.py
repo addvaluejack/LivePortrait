@@ -43,38 +43,19 @@ class LivePortraitPipeline(object):
         device =  self.live_portrait_wrapper.device
         crop_cfg = self.cropper.crop_cfg
 
-        ######## process source portrait ########
-        img_rgb = load_image_rgb(args.source_image)
+        ######## process source info ########
+        flag_lip_zero = inf_cfg.flag_lip_zero  # not overwrite
+        source_info = "/home/jiangmuye/Projects/LivePortrait/assets/examples/source/muye.mp4"
+        source_rgb_lst= load_driving_info(source_info)
+        img_rgb = source_rgb_lst[0]
         img_rgb = resize_to_limit(img_rgb, inf_cfg.source_max_dim, inf_cfg.source_division)
         log(f"Load source image from {args.source_image}")
 
-        crop_info = self.cropper.crop_source_image(img_rgb, crop_cfg)
-        if crop_info is None:
-            raise Exception("No face detected in the source image!")
-        source_lmk = crop_info['lmk_crop']
-        img_crop, img_crop_256x256 = crop_info['img_crop'], crop_info['img_crop_256x256']
-
-        if inf_cfg.flag_do_crop:
-            I_s = self.live_portrait_wrapper.prepare_source(img_crop_256x256)
-        else:
-            img_crop_256x256 = cv2.resize(img_rgb, (256, 256))  # force to resize to 256x256
-            I_s = self.live_portrait_wrapper.prepare_source(img_crop_256x256)
-        x_s_info = self.live_portrait_wrapper.get_kp_info(I_s)
-        x_c_s = x_s_info['kp']
-        R_s = get_rotation_matrix(x_s_info['pitch'], x_s_info['yaw'], x_s_info['roll'])
-        f_s = self.live_portrait_wrapper.extract_feature_3d(I_s)
-        x_s = self.live_portrait_wrapper.transform_keypoint(x_s_info)
-
-        flag_lip_zero = inf_cfg.flag_lip_zero  # not overwrite
-        if flag_lip_zero:
-            # let lip-open scalar to be 0 at first
-            c_d_lip_before_animation = [0.]
-            combined_lip_ratio_tensor_before_animation = self.live_portrait_wrapper.calc_combined_lip_ratio(c_d_lip_before_animation, source_lmk)
-            if combined_lip_ratio_tensor_before_animation[0][0] < inf_cfg.lip_zero_threshold:
-                flag_lip_zero = False
-            else:
-                lip_delta_before_animation = self.live_portrait_wrapper.retarget_lip(x_s, combined_lip_ratio_tensor_before_animation)
-        ############################################
+        ret = self.cropper.crop_driving_video(source_rgb_lst)
+        source_rgb_crop_lst, source_rgb_lmk_crop_lst, source_rgb_M_c2o_lst = ret['frame_crop_lst'], ret['lmk_crop_lst'], ret['M_c2o_lst']
+        source_rgb_crop_256x256_lst = [cv2.resize(_, (256, 256)) for _ in source_rgb_crop_lst]  # force to resize to 256x256
+        I_s_lst = self.live_portrait_wrapper.prepare_driving_videos(source_rgb_crop_256x256_lst)
+        #####################################
 
         ######## process driving info ########
         flag_load_from_template = is_template(args.driving_info)
@@ -134,7 +115,6 @@ class LivePortraitPipeline(object):
         ######## prepare for pasteback ########
         I_p_pstbk_lst = None
         if inf_cfg.flag_pasteback and inf_cfg.flag_do_crop and inf_cfg.flag_stitching:
-            mask_ori_float = prepare_paste_back(inf_cfg.mask_crop, crop_info['M_c2o'], dsize=(img_rgb.shape[1], img_rgb.shape[0]))
             I_p_pstbk_lst = []
             log("Prepared pasteback mask done.")
         #########################################
@@ -144,72 +124,88 @@ class LivePortraitPipeline(object):
 
         for i in track(range(n_frames), description='🚀Animating...', total=n_frames):
             x_d_i_info = template_dct['motion'][i]
+            x_s_i_info = self.live_portrait_wrapper.get_kp_info(I_s_lst[i])
             x_d_i_info = dct2device(x_d_i_info, device)
+            x_s_i_info = dct2device(x_s_i_info, device)
             R_d_i = x_d_i_info['R_d']
+            R_s_i = get_rotation_matrix(x_s_i_info['pitch'], x_s_i_info['yaw'], x_s_i_info['roll'])
+            f_s_i = self.live_portrait_wrapper.extract_feature_3d(I_s_lst[i])
+            x_s_i = self.live_portrait_wrapper.transform_keypoint(x_s_i_info)
+            if flag_lip_zero:
+                # let lip-open scalar to be 0 at first
+                c_d_lip_before_animation = [0.]
+                combined_lip_ratio_tensor_before_animation = self.live_portrait_wrapper.calc_combined_lip_ratio(c_d_lip_before_animation, source_rgb_lmk_crop_lst[i])
+                if combined_lip_ratio_tensor_before_animation[0][0] < inf_cfg.lip_zero_threshold:
+                    flag_lip_zero = False
+                else:
+                    lip_delta_before_animation = self.live_portrait_wrapper.retarget_lip(x_s_i, combined_lip_ratio_tensor_before_animation)
 
             if i == 0:
                 R_d_0 = R_d_i
                 x_d_0_info = x_d_i_info
 
             if inf_cfg.flag_relative_motion:
-                R_new = (R_d_i @ R_d_0.permute(0, 2, 1)) @ R_s
-                delta_new = x_s_info['exp'] + (x_d_i_info['exp'] - x_d_0_info['exp'])
-                scale_new = x_s_info['scale'] * (x_d_i_info['scale'] / x_d_0_info['scale'])
-                t_new = x_s_info['t'] + (x_d_i_info['t'] - x_d_0_info['t'])
+                R_new = (R_d_i @ R_d_0.permute(0, 2, 1)) @ R_s_i
+                delta_new = x_s_i_info['exp'] + (x_d_i_info['exp'] - x_d_0_info['exp'])
+                scale_new = x_s_i_info['scale'] * (x_d_i_info['scale'] / x_d_0_info['scale'])
+                t_new = x_s_i_info['t'] + (x_d_i_info['t'] - x_d_0_info['t'])
             else:
                 R_new = R_d_i
                 delta_new = x_d_i_info['exp']
-                scale_new = x_s_info['scale']
+                scale_new = x_s_i_info['scale']
                 t_new = x_d_i_info['t']
 
             t_new[..., 2].fill_(0)  # zero tz
+            x_c_s = x_s_i_info['kp']
             x_d_i_new = scale_new * (x_c_s @ R_new + delta_new) + t_new
 
             # Algorithm 1:
             if not inf_cfg.flag_stitching and not inf_cfg.flag_eye_retargeting and not inf_cfg.flag_lip_retargeting:
                 # without stitching or retargeting
                 if flag_lip_zero:
-                    x_d_i_new += lip_delta_before_animation.reshape(-1, x_s.shape[1], 3)
+                    x_d_i_new += lip_delta_before_animation.reshape(-1, x_s_i.shape[1], 3)
                 else:
                     pass
             elif inf_cfg.flag_stitching and not inf_cfg.flag_eye_retargeting and not inf_cfg.flag_lip_retargeting:
                 # with stitching and without retargeting
                 if flag_lip_zero:
-                    x_d_i_new = self.live_portrait_wrapper.stitching(x_s, x_d_i_new) + lip_delta_before_animation.reshape(-1, x_s.shape[1], 3)
+                    x_d_i_new = self.live_portrait_wrapper.stitching(x_s_i, x_d_i_new) + lip_delta_before_animation.reshape(-1, x_s_i.shape[1], 3)
                 else:
-                    x_d_i_new = self.live_portrait_wrapper.stitching(x_s, x_d_i_new)
+                    x_d_i_new = self.live_portrait_wrapper.stitching(x_s_i, x_d_i_new)
             else:
                 eyes_delta, lip_delta = None, None
                 if inf_cfg.flag_eye_retargeting:
                     c_d_eyes_i = c_d_eyes_lst[i]
-                    combined_eye_ratio_tensor = self.live_portrait_wrapper.calc_combined_eye_ratio(c_d_eyes_i, source_lmk)
+                    combined_eye_ratio_tensor = self.live_portrait_wrapper.calc_combined_eye_ratio(c_d_eyes_i, source_rgb_lmk_crop_lst[i])
                     # ∆_eyes,i = R_eyes(x_s; c_s,eyes, c_d,eyes,i)
-                    eyes_delta = self.live_portrait_wrapper.retarget_eye(x_s, combined_eye_ratio_tensor)
+                    eyes_delta = self.live_portrait_wrapper.retarget_eye(x_s_i, combined_eye_ratio_tensor)
                 if inf_cfg.flag_lip_retargeting:
                     c_d_lip_i = c_d_lip_lst[i]
-                    combined_lip_ratio_tensor = self.live_portrait_wrapper.calc_combined_lip_ratio(c_d_lip_i, source_lmk)
+                    combined_lip_ratio_tensor = self.live_portrait_wrapper.calc_combined_lip_ratio(c_d_lip_i, source_rgb_lmk_crop_lst[i])
                     # ∆_lip,i = R_lip(x_s; c_s,lip, c_d,lip,i)
-                    lip_delta = self.live_portrait_wrapper.retarget_lip(x_s, combined_lip_ratio_tensor)
+                    lip_delta = self.live_portrait_wrapper.retarget_lip(x_s_i, combined_lip_ratio_tensor)
 
                 if inf_cfg.flag_relative_motion:  # use x_s
-                    x_d_i_new = x_s + \
-                        (eyes_delta.reshape(-1, x_s.shape[1], 3) if eyes_delta is not None else 0) + \
-                        (lip_delta.reshape(-1, x_s.shape[1], 3) if lip_delta is not None else 0)
+                    x_d_i_new = x_s_i + \
+                        (eyes_delta.reshape(-1, x_s_i.shape[1], 3) if eyes_delta is not None else 0) + \
+                        (lip_delta.reshape(-1, x_s_i.shape[1], 3) if lip_delta is not None else 0)
                 else:  # use x_d,i
                     x_d_i_new = x_d_i_new + \
-                        (eyes_delta.reshape(-1, x_s.shape[1], 3) if eyes_delta is not None else 0) + \
-                        (lip_delta.reshape(-1, x_s.shape[1], 3) if lip_delta is not None else 0)
+                        (eyes_delta.reshape(-1, x_s_i.shape[1], 3) if eyes_delta is not None else 0) + \
+                        (lip_delta.reshape(-1, x_s_i.shape[1], 3) if lip_delta is not None else 0)
 
                 if inf_cfg.flag_stitching:
-                    x_d_i_new = self.live_portrait_wrapper.stitching(x_s, x_d_i_new)
+                    x_d_i_new = self.live_portrait_wrapper.stitching(x_s_i, x_d_i_new)
 
-            out = self.live_portrait_wrapper.warp_decode(f_s, x_s, x_d_i_new)
+            out = self.live_portrait_wrapper.warp_decode(f_s_i, x_s_i, x_d_i_new)
             I_p_i = self.live_portrait_wrapper.parse_output(out['out'])[0]
             I_p_lst.append(I_p_i)
 
             if inf_cfg.flag_pasteback and inf_cfg.flag_do_crop and inf_cfg.flag_stitching:
                 # TODO: pasteback is slow, considering optimize it using multi-threading or GPU
-                I_p_pstbk = paste_back(I_p_i, crop_info['M_c2o'], img_rgb, mask_ori_float)
+                img_rgb = resize_to_limit(source_rgb_lst[i], inf_cfg.source_max_dim, inf_cfg.source_division)
+                mask_ori_float = prepare_paste_back(inf_cfg.mask_crop, source_rgb_M_c2o_lst[i], dsize=(img_rgb.shape[1], img_rgb.shape[0]))
+                I_p_pstbk = paste_back(I_p_i, source_rgb_M_c2o_lst[i], img_rgb, mask_ori_float)
                 I_p_pstbk_lst.append(I_p_pstbk)
 
         mkdir(args.output_dir)
@@ -218,7 +214,7 @@ class LivePortraitPipeline(object):
 
         ######### build final concact result #########
         # driving frame | source image | generation, or source image | generation
-        frames_concatenated = concat_frames(driving_rgb_crop_256x256_lst, img_crop_256x256, I_p_lst)
+        frames_concatenated = concat_frames(driving_rgb_crop_256x256_lst, source_rgb_crop_256x256_lst, I_p_lst)
         wfp_concat = osp.join(args.output_dir, f'{basename(args.source_image)}--{basename(args.driving_info)}_concat.mp4')
         images2video(frames_concatenated, wfp=wfp_concat, fps=output_fps)
 
