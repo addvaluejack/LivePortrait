@@ -31,7 +31,7 @@ class GradioPipeline(LivePortraitPipeline):
 
     def execute_video(
         self,
-        input_image_path,
+        source_video_path,
         input_video_path,
         flag_relative_input,
         flag_do_crop_input,
@@ -40,9 +40,9 @@ class GradioPipeline(LivePortraitPipeline):
     ):
         """ for video driven potrait animation
         """
-        if input_image_path is not None and input_video_path is not None:
+        if source_video_path is not None and input_video_path is not None:
             args_user = {
-                'source_image': input_image_path,
+                'source_video': source_video_path,
                 'driving_info': input_video_path,
                 'flag_relative': flag_relative_input,
                 'flag_do_crop': flag_do_crop_input,

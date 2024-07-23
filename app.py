@@ -59,12 +59,11 @@ title_md = "assets/gradio_title.md"
 example_portrait_dir = "assets/examples/source"
 example_video_dir = "assets/examples/driving"
 data_examples = [
-    [osp.join(example_portrait_dir, "s9.jpg"), osp.join(example_video_dir, "d0.mp4"), True, True, True, False],
-    [osp.join(example_portrait_dir, "s6.jpg"), osp.join(example_video_dir, "d0.mp4"), True, True, True, False],
-    [osp.join(example_portrait_dir, "s10.jpg"), osp.join(example_video_dir, "d0.mp4"), True, True, True, False],
-    [osp.join(example_portrait_dir, "s5.jpg"), osp.join(example_video_dir, "d18.mp4"), True, True, True, False],
-    [osp.join(example_portrait_dir, "s7.jpg"), osp.join(example_video_dir, "d19.mp4"), True, True, True, False],
-    [osp.join(example_portrait_dir, "s2.jpg"), osp.join(example_video_dir, "d13.mp4"), True, True, True, True],
+    [osp.join(example_video_dir, "d0.mp4")],
+    [osp.join(example_video_dir, "d18.mp4")],
+    [osp.join(example_video_dir, "d19.mp4")],
+    [osp.join(example_video_dir, "d14.mp4")],
+    [osp.join(example_video_dir, "d6.mp4")],
 ]
 #################### interface logic ####################
 
@@ -82,17 +81,12 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
     gr.Markdown(load_description("assets/gradio_description_upload.md"))
     with gr.Row():
         with gr.Accordion(open=True, label="Source Portrait"):
-            image_input = gr.Image(type="filepath")
+            source_video_input = gr.Video()
             gr.Examples(
                 examples=[
-                    [osp.join(example_portrait_dir, "s9.jpg")],
-                    [osp.join(example_portrait_dir, "s6.jpg")],
-                    [osp.join(example_portrait_dir, "s10.jpg")],
-                    [osp.join(example_portrait_dir, "s5.jpg")],
-                    [osp.join(example_portrait_dir, "s7.jpg")],
-                    [osp.join(example_portrait_dir, "s12.jpg")],
+                    [osp.join(example_video_dir, "d0.mp4")]
                 ],
-                inputs=[image_input],
+                inputs=[source_video_input],
                 cache_examples=False,
             )
         with gr.Accordion(open=True, label="Driving Video"):
@@ -120,7 +114,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
         with gr.Column():
             process_button_animation = gr.Button("🚀 Animate", variant="primary")
         with gr.Column():
-            process_button_reset = gr.ClearButton([image_input, video_input, output_video, output_video_concat], value="🧹 Clear")
+            process_button_reset = gr.ClearButton([source_video_input, video_input, output_video, output_video_concat], value="🧹 Clear")
     with gr.Row():
         with gr.Column():
             with gr.Accordion(open=True, label="The animated video in the original image space"):
@@ -136,7 +130,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
             examples=data_examples,
             fn=gpu_wrapped_execute_video,
             inputs=[
-                image_input,
+                source_video_input,
                 video_input,
                 flag_relative_input,
                 flag_do_crop_input,
@@ -196,7 +190,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
     process_button_animation.click(
         fn=gpu_wrapped_execute_video,
         inputs=[
-            image_input,
+            source_video_input,
             video_input,
             flag_relative_input,
             flag_do_crop_input,
